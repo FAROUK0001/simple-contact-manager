@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
 import { Dialog, DialogPanel, DialogTitle } from '@headlessui/vue';
 import { Button } from '@/components/ui/button';
 
-const props = defineProps<{
+ defineProps<{
     modelValue: boolean;
     title?: string;
     message?: string;
