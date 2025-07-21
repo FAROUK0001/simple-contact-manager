@@ -14,13 +14,13 @@ class ContactActionNotification extends Mailable
 {
     use Queueable, SerializesModels;
 
-    public Contact $contact;
+    public array $contact;
     public string $action;
 
     /**
      * Create a new message instance.
      */
-    public function __construct(Contact $contact, string $action)
+    public function __construct(array $contact, string $action)
     {
         $this->contact = $contact;
         $this->action = $action;
@@ -43,6 +43,10 @@ class ContactActionNotification extends Mailable
     {
         return new Content(
             view: 'emails.contact_notification',
+            with: [
+                'contact' => $this->contact,
+                'action' => $this->action,
+            ]
         );
     }
 

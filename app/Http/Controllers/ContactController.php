@@ -2,19 +2,19 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\SendContactNotification;
 use App\Models\Contact;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
-use App\Mail\ContactActionNotification;
-use Illuminate\Support\Facades\Mail;
+
 class ContactController extends Controller
 {
     /**
      * Display a listing of the resource.
      */
-
-    public function index(Request $request){
+    public function index(Request $request)
+    {
         $search = $request->input('search');
         $contacts = $request->user()->contacts()
             ->when($search, function ($query) use ($search) {
@@ -28,12 +28,12 @@ class ContactController extends Controller
             ->latest()
             ->paginate(7)
             ->withQueryString();
+
         return Inertia::render('contact/Index', [
             'contacts' => $contacts,
             'search' => $search,
         ]);
     }
-
 
     /**
      * Show the form for creating a new resource.
@@ -48,81 +48,90 @@ class ContactController extends Controller
      */
     public function store(Request $request)
     {
-        // Check if the user is authenticated
-      $this->authorize('create', Contact::class);
-        // Validate and store the contact data
-        $validatedData = $request->validate([
+        $this->authorize('create', Contact::class);
+
+        $validated = $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|max:255',
             'phone' => 'nullable|string|max:20',
-            'notes' => 'nullable|string|max:20',
-            'photo' => 'nullable|image|max:2048', // Optional photo upload
+            'notes' => 'nullable|string|max:255',
+            'photo' => 'nullable|image|max:2048',
         ]);
+
         if ($request->hasFile('photo')) {
-            // Store the photo and get its path
-            $validatedData['photo'] = $request->file('photo')->store('contacts', 'public');
+            $validated['photo'] = $request->file('photo')->store('contacts', 'public');
         }
 
-        // Here you would typically save the contact to the database
-        $contact=$request->user()->contacts()->create($validatedData);
-        Mail::to(request()->user()->email)->send(new ContactActionNotification($contact, 'created'));
-        // rest of the code
-        // For demonstration, we'll just return the validated data
+        $contact = $request->user()->contacts()->create($validated);
+
+        // Send notification on create
+        $contactData = $contact->toArray();
+        $email = $request->user()->email;
+        dispatch(new SendContactNotification($contactData, 'created', $email));
+
         return redirect()->route('contact.index')->with('success', 'Contact created successfully!');
     }
 
     /**
      * Display the specified resource.
      */
-    public function show(string $id)
+    public function show(Request $request, $id)
     {
+        $contact = $request->user()->contacts()->findOrFail($id);
+
+        $this->authorize('view', $contact);
+
         return Inertia::render('contact/Show', [
-            'contact' => request()->user()->contacts()->findOrFail($id),
+            'contact' => $contact,
         ]);
     }
 
     /**
      * Show the form for editing the specified resource.
      */
-    public function edit(Contact $contact)
+    public function edit(Request $request, $id)
     {
+        $contact = $request->user()->contacts()->findOrFail($id);
+
+        $this->authorize('update', $contact);
 
         return Inertia::render('contact/Edit', [
-            'contact' => $contact,]);
+            'contact' => $contact,
+        ]);
     }
-
 
     /**
      * Update the specified resource in storage.
      */
-
-    public function update(Request $request, Contact $contact)
+    public function update(Request $request, $id)
     {
-        // Check if the user is authorized to update the contact
+        $contact = $request->user()->contacts()->findOrFail($id);
+
         $this->authorize('update', $contact);
+
         $data = $request->validate([
             'name' => 'required|string|max:255',
             'email' => 'required|email|max:255',
-            'phone' => 'nullable|string|max:255',
-            'notes' => 'nullable|string',
+            'phone' => 'nullable|string|max:20',
+            'notes' => 'nullable|string|max:255',
             'photo' => 'nullable|image|max:2048',
         ]);
 
         if ($request->hasFile('photo')) {
-            // Delete an old photo if it exists
             if ($contact->photo) {
-              //      dd(Storage::disk('public'));
                 Storage::disk('public')->delete($contact->photo);
             }
-            // Store a new photo
             $data['photo'] = $request->file('photo')->store('contacts', 'public');
         } else {
-            unset($data['photo']); // do not change an existing photo
+            unset($data['photo']);
         }
 
+        $contactData = $contact->toArray();
+        $email = $request->user()->email;
+
         $contact->update($data);
-        Mail::to(request()->user()->email)->send(new ContactActionNotification($contact, 'updated'));
-        // rest of the code
+
+        dispatch(new SendContactNotification($contactData, 'updated', $email));
 
         return redirect()->route('contact.edit', $contact->id)
             ->with('success', 'Contact updated successfully.');
@@ -131,22 +140,30 @@ class ContactController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(string $id)
+    public function destroy(Request $request, $id)
     {
-        // Check if the user is authorized to delete the contact
-        $this->authorize('delete', Contact::class);
-        // Here you would typically delete the contact from the database
-        $contact = request()->user()->contacts()->findOrFail($id);
+        $contact = $request->user()->contacts()->findOrFail($id);
+
+        $this->authorize('delete', $contact);
+
+        $contactData = $contact->toArray();
+        $email = $request->user()->email;
+
         $contact->delete();
-        Mail::to(request()->user()->email)->send(new ContactActionNotification($contact, 'deleted'));
+
+        dispatch(new SendContactNotification($contactData, 'deleted', $email));
+
         return redirect()->route('contact.index')->with('success', 'Contact deleted successfully!');
     }
 
-// ContactController.php
-    public function inlineUpdate(Request $request, string $id)
+    /**
+     * Inline update for phone and notes.
+     */
+    public function inlineUpdate(Request $request, $id)
     {
-        $this->authorize('update', Contact::class);
         $contact = $request->user()->contacts()->findOrFail($id);
+
+        $this->authorize('update', $contact);
 
         $data = $request->only(['phone', 'notes']);
 
@@ -155,7 +172,12 @@ class ContactController extends Controller
             'notes' => 'nullable|string|max:255',
         ])->validate();
 
+        $contactData = $contact->toArray();
+        $email = $request->user()->email;
+
         $contact->update($validated);
+
+        dispatch(new SendContactNotification($contactData, 'updated', $email));
 
         return redirect()->back();
     }
@@ -163,6 +185,4 @@ class ContactController extends Controller
     private function authorize(string $string, string $class)
     {
     }
-
-
 }
